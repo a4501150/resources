@@ -187,6 +187,11 @@
       <default>60</default>
       <summary>Amount of data points that should be shown in a graph</summary>
     </key>
+    <key name="max-graph-data-points" type="u">
+      <range min="60" max="43200"/>
+      <default>600</default>
+      <summary>Amount of data points that should be recorded</summary>
+    </key>
     <key name="apps-sort-by" type="u">
       <default>0</default>
       <summary>Which column the Applications column view should be sorted by</summary>

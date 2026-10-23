@@ -76,6 +76,9 @@
                     <child>
                       <object class="ResGraphBox" id="temperature"/>
                     </child>
+                    <child>
+                      <object class="ResGraphBox" id="power"/>
+                    </child>
                   </object>
                 </child>
                 <child>

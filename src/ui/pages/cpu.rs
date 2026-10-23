@@ -12,7 +12,7 @@ use crate::ui::widgets::stack_sidebar_item::UsageLabels;
 use crate::utils::i18n::{i18n, i18n_f};
 use crate::utils::settings::SETTINGS;
 use crate::utils::units::{
-    convert_fraction, convert_frequency, convert_temperature, format_time_integer,
+    convert_fraction, convert_frequency, convert_power, convert_temperature, format_time_integer,
 };
 use crate::utils::{FiniteOr, NUM_CPUS, boot_time};
 
@@ -63,6 +63,8 @@ mod imp {
         pub architecture: TemplateChild<adw::ActionRow>,
         #[template_child]
         pub temperature: TemplateChild<ResGraphBox>,
+        #[template_child]
+        pub power: TemplateChild<ResGraphBox>,
         pub thread_graphs: RefCell<Vec<ResGraphBox>>,
         pub old_total_usage: Cell<(u64, u64)>,
         pub old_thread_usages: RefCell<Vec<(u64, u64)>>,
@@ -123,6 +125,7 @@ mod imp {
                 virtualization: Default::default(),
                 architecture: Default::default(),
                 temperature: Default::default(),
+                power: Default::default(),
                 thread_graphs: Default::default(),
                 uses_meter: Cell::new(true),
                 main_graph_color: glib::Bytes::from_static(&super::ResCPU::MAIN_GRAPH_COLOR),
@@ -222,6 +225,7 @@ impl ResCPU {
         let CpuData {
             new_thread_usages,
             temperature: _,
+            power_usage: _,
             frequencies: _,
         } = CpuData::new(logical_cpus);
 
@@ -274,6 +278,10 @@ impl ResCPU {
         imp.temperature.set_title_label(&i18n("Temperature"));
         imp.temperature.graph().set_graph_color(0x1a, 0x5f, 0xb4);
         imp.temperature.graph().set_locked_max_y(None);
+
+        imp.power.set_title_label(&i18n("Power Usage"));
+        imp.power.graph().set_graph_color(0xe6, 0x61, 0x00);
+        imp.power.graph().set_locked_max_y(None);
 
         imp.max_speed.set_subtitle(
             &cpu_info
@@ -358,6 +366,7 @@ impl ResCPU {
         let CpuData {
             new_thread_usages,
             temperature,
+            power_usage,
             frequencies,
         } = cpu_data;
 
@@ -440,6 +449,26 @@ impl ResCPU {
                 i18n("Temperature"),
                 convert_temperature(*temperature as f64),
             );
+        }
+
+        imp.power.graph().set_visible(power_usage.is_some());
+
+        if let Some(power_usage) = *power_usage {
+            let power_string = convert_power(power_usage);
+
+            let highest_power_string = convert_power(imp.power.graph().get_highest_value());
+
+            imp.power.set_subtitle(&format!(
+                "{} · {} {}",
+                &power_string,
+                i18n("Highest:"),
+                highest_power_string
+            ));
+            imp.power.graph().push_data_point(power_usage);
+
+            usage_labels.add_with_icon("flash-symbolic", i18n("Power Usage"), power_string);
+        } else {
+            imp.power.set_subtitle(&i18n("N/A"));
         }
 
         self.set_property("usage", total_fraction);

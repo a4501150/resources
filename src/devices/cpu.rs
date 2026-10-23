@@ -5,8 +5,10 @@ use log::{debug, trace, warn};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::LazyLock,
+    sync::{LazyLock, Mutex},
 };
+
+use process_data::unix_as_secs_f64;
 
 use crate::utils::read_parsed;
 
@@ -47,6 +49,30 @@ static CPU_TEMPERATURE_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
             None
         })
 });
+
+static CPU_PACKAGE_ENERGY_PATHS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
+    let mut paths = Vec::new();
+    for path in glob("/sys/class/powercap/intel-rapl:*")
+        .expect("Invalid glob pattern")
+        .flatten()
+    {
+        if let Ok(name) = read_parsed::<String>(path.join("name")) {
+            // only take package-level domains (e. g. "package-0"), not
+            // subdomains like "core" or "dram"
+            if name.trim().starts_with("package") && path.join("energy_uj").exists() {
+                debug!("CPU package energy counter located at {path:?} ({name})");
+                paths.push(path.join("energy_uj"));
+            }
+        }
+    }
+    if paths.is_empty() {
+        warn!("No CPU powercap energy counter found!");
+    }
+    paths
+});
+
+/// Timestamp and per-package energy counters of the last RAPL measurement
+static LAST_RAPL: LazyLock<Mutex<Option<(f64, Vec<u64>)>>> = LazyLock::new(|| Mutex::new(None));
 
 fn search_for_cpu_temp<S: AsRef<str>>(base_path: S, temp_label: &str) -> Option<PathBuf> {
     let base = base_path.as_ref();
@@ -135,6 +161,7 @@ fn search_for_thermal_zones(types: &[&'static str]) -> Option<PathBuf> {
 pub struct CpuData {
     pub new_thread_usages: Vec<Result<(u64, u64)>>,
     pub temperature: Result<f32, anyhow::Error>,
+    pub power_usage: Option<f64>,
     pub frequencies: Vec<Option<u64>>,
 }
 
@@ -144,6 +171,8 @@ impl CpuData {
         let new_thread_usages = get_cpu_usage();
 
         let temperature = get_temperature();
+
+        let power_usage = get_power_usage();
 
         let mut frequencies = Vec::with_capacity(logical_cpus);
 
@@ -155,6 +184,7 @@ impl CpuData {
         let cpu_data = Self {
             new_thread_usages,
             temperature,
+            power_usage,
             frequencies,
         };
 
@@ -362,6 +392,56 @@ fn read_sysfs_thermal<P: AsRef<Path>>(path: P) -> Result<f32> {
     read_parsed::<f32>(path)
         .map(|t| t / 1000f32)
         .with_context(|| format!("unable to read {}", path.display()))
+}
+
+/// Returns the average CPU package power usage (in watts) since the last time
+/// this function was called, based on the RAPL energy counters.
+///
+/// Returns `None` if there's no readable powercap interface (e. g. no
+/// permissions or unsupported platform) or on the very first call since
+/// there's no previous measurement to calculate the delta from.
+pub fn get_power_usage() -> Option<f64> {
+    if CPU_PACKAGE_ENERGY_PATHS.is_empty() {
+        trace!("No CPU package energy counters found");
+        return None;
+    }
+
+    // propagate read errors (e. g. EACCES) as None without touching the
+    // state so the next successful read spans a larger time delta
+    let new_energies = CPU_PACKAGE_ENERGY_PATHS
+        .iter()
+        .map(|path| read_parsed::<u64>(path).ok())
+        .collect::<Option<Vec<u64>>>()?;
+
+    let new_timestamp = unix_as_secs_f64();
+
+    let mut last_rapl = LAST_RAPL.lock().unwrap_or_else(|e| e.into_inner());
+
+    // first call initializes the state and returns None
+    let (old_timestamp, old_energies) = last_rapl.replace((new_timestamp, new_energies.clone()))?;
+
+    let timestamp_delta = new_timestamp - old_timestamp;
+    if timestamp_delta <= 0.0 {
+        return None;
+    }
+
+    // each package counter wraps around at its own max_energy_range_uj
+    let energy_delta = CPU_PACKAGE_ENERGY_PATHS
+        .iter()
+        .zip(new_energies.iter().zip(old_energies.iter()))
+        .map(|(path, (&new, &old))| {
+            if new >= old {
+                new - old
+            } else {
+                read_parsed::<u64>(path.with_file_name("max_energy_range_uj"))
+                    .map(|max| max.saturating_sub(old) + new)
+                    .unwrap_or(new)
+            }
+        })
+        .sum::<u64>() as f64;
+
+    // energy counters are in microjoules
+    Some(energy_delta / 1_000_000.0 / timestamp_delta)
 }
 
 #[cfg(test)]

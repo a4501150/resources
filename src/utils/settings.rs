@@ -326,7 +326,12 @@ impl Settings {
 
     int_settings!(window_width, window_height);
 
-    uint_settings!(graph_data_points, apps_sort_by, processes_sort_by);
+    uint_settings!(
+        graph_data_points,
+        max_graph_data_points,
+        apps_sort_by,
+        processes_sort_by
+    );
 
     bool_settings!(
         show_virtual_drives,

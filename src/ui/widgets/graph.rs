@@ -10,7 +10,17 @@ use std::f64;
 use crate::application::Application;
 use crate::utils::settings::SETTINGS;
 
-const MAX_DATA_POINTS: u32 = 600;
+/// Upper limit for the amount of recorded data points to protect against
+/// unreasonable memory usage
+const ABSOLUTE_MAX_DATA_POINTS: u32 = 43_200;
+
+/// Returns the amount of data points that should be recorded, i. e. the
+/// size of the graphs' ring buffer.
+fn max_data_points() -> u32 {
+    SETTINGS
+        .max_graph_data_points()
+        .clamp(1, ABSOLUTE_MAX_DATA_POINTS)
+}
 
 mod imp {
     use std::{
@@ -37,7 +47,7 @@ mod imp {
 
     use crate::utils::settings::SETTINGS;
 
-    use super::MAX_DATA_POINTS;
+    use super::max_data_points;
 
     #[derive(Debug)]
     pub struct ResGraph {
@@ -48,8 +58,12 @@ mod imp {
 
     impl Default for ResGraph {
         fn default() -> Self {
-            let mut empty_deque = VecDeque::with_capacity(MAX_DATA_POINTS as usize);
-            for _ in 0..MAX_DATA_POINTS {
+            let mut empty_deque = VecDeque::with_capacity(max_data_points() as usize);
+            // prefill the visible window so a fresh graph starts as a flat
+            // line; the recorded history fills up as data points are added
+            let prefill_points =
+                max_data_points().min(SETTINGS.graph_data_points()).max(1) as usize;
+            for _ in 0..prefill_points {
                 empty_deque.push_back(0.0);
             }
 
@@ -93,23 +107,31 @@ mod imp {
             let data_points = self.data_points.borrow();
             let color = self.graph_color.get();
 
-            let start_point =
-                (MAX_DATA_POINTS.saturating_sub(SETTINGS.graph_data_points())) as usize;
-
             let root = backend.into_drawing_area();
 
             root.fill(&self.graph_color.get().mix(0.1))?;
 
+            // nothing to draw yet (e. g. right after clearing the data points)
+            if data_points.is_empty() {
+                root.present()?;
+                return Ok(());
+            }
+
+            let displayed_points = (SETTINGS.graph_data_points() as usize)
+                .min(data_points.len())
+                .max(1);
+            let start_point = data_points.len() - displayed_points;
+
             let y_max = self.max_y.get().unwrap_or_else(|| {
                 let max = *data_points
-                    .range(start_point..(MAX_DATA_POINTS as usize))
+                    .range(start_point..)
                     .max_by(|x, y| x.total_cmp(y))
                     .unwrap_or(&0.0);
                 if max == 0.0 { f64::EPSILON } else { max }
             });
 
             let mut chart = ChartBuilder::on(&root).build_cartesian_2d(
-                0f64..(f64::from(SETTINGS.graph_data_points()) - 1.0),
+                0f64..(f64::from(displayed_points as u32) - 1.0),
                 0f64..y_max,
             )?;
 
@@ -125,7 +147,7 @@ mod imp {
             chart.draw_series(
                 AreaSeries::new(
                     (0..)
-                        .zip(data_points.range(start_point..(MAX_DATA_POINTS as usize)))
+                        .zip(data_points.range(start_point..))
                         .map(|(x, y)| (f64::from(x), *y)),
                     0.0,
                     color.mix(0.4),
@@ -173,11 +195,14 @@ impl ResGraph {
     pub fn get_highest_value(&self) -> f64 {
         let imp = self.imp();
 
-        let start_point = (MAX_DATA_POINTS.saturating_sub(SETTINGS.graph_data_points())) as usize;
+        let data_points = imp.data_points.borrow();
+        let displayed_points = (SETTINGS.graph_data_points() as usize)
+            .min(data_points.len())
+            .max(1);
+        let start_point = data_points.len() - displayed_points;
 
-        *imp.data_points
-            .borrow()
-            .range(start_point..(MAX_DATA_POINTS as usize))
+        *data_points
+            .range(start_point..)
             .max_by(|x, y| x.total_cmp(y))
             .unwrap_or(&0.0)
     }
@@ -185,10 +210,14 @@ impl ResGraph {
     pub fn push_data_point(&self, data: f64) {
         let imp = self.imp();
         let mut data_points = imp.data_points.borrow_mut();
-        if data_points.len() >= MAX_DATA_POINTS as usize {
+        let max = max_data_points() as usize;
+        while data_points.len() >= max {
             data_points.pop_front();
         }
         data_points.push_back(data);
+        if data_points.capacity() > 2 * max {
+            data_points.shrink_to_fit();
+        }
         self.queue_draw_if_not_suspended();
     }
 
@@ -200,7 +229,7 @@ impl ResGraph {
         let imp = self.imp();
         let mut data_points = imp.data_points.borrow_mut();
         for data_point in data {
-            if data_points.len() >= MAX_DATA_POINTS as usize {
+            if data_points.len() >= max_data_points() as usize {
                 data_points.pop_front();
             }
             data_points.push_back(*data_point);

@@ -30,6 +30,8 @@ mod imp {
         #[template_child]
         pub graph_data_points_row: TemplateChild<adw::SpinRow>,
         #[template_child]
+        pub max_graph_data_points_row: TemplateChild<adw::SpinRow>,
+        #[template_child]
         pub sidebar_meter_type_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub normalize_cpu_usage_row: TemplateChild<adw::SwitchRow>,
@@ -183,6 +185,12 @@ impl ResSettingsDialog {
             .set_active(SETTINGS.show_graph_grids());
         imp.graph_data_points_row
             .set_value(f64::from(SETTINGS.graph_data_points()));
+        imp.max_graph_data_points_row
+            .set_value(f64::from(SETTINGS.max_graph_data_points()));
+        // the displayed window can't be larger than the recorded history
+        imp.graph_data_points_row
+            .adjustment()
+            .set_upper(f64::from(SETTINGS.max_graph_data_points().max(10)));
         imp.sidebar_meter_type_row
             .set_selected(SETTINGS.sidebar_meter_type() as u32);
         imp.normalize_cpu_usage_row
@@ -297,6 +305,23 @@ impl ResSettingsDialog {
             let _ = SETTINGS.set_graph_data_points(spin_row.value() as u32);
             false
         });
+
+        let graph_data_points_row = imp.graph_data_points_row.get();
+        imp.max_graph_data_points_row
+            .connect_output(move |spin_row| {
+                let max_graph_data_points = spin_row.value() as u32;
+                let _ = SETTINGS.set_max_graph_data_points(max_graph_data_points);
+                // keep the displayed window within the recorded history
+                graph_data_points_row
+                    .adjustment()
+                    .set_upper(f64::from(max_graph_data_points.max(10)));
+                graph_data_points_row.set_value(
+                    graph_data_points_row
+                        .value()
+                        .min(f64::from(max_graph_data_points)),
+                );
+                false
+            });
 
         imp.sidebar_meter_type_row
             .connect_selected_item_notify(|combo_row| {

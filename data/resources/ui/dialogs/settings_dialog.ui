@@ -82,6 +82,19 @@
               </object>
             </child>
             <child>
+              <object class="AdwSpinRow" id="max_graph_data_points_row">
+                <property name="title" translatable="yes">Recorded Data Points</property>
+                <property name="subtitle" translatable="yes">How many data points are kept for each graph; a longer history increases memory usage</property>
+                <property name="snap-to-ticks">true</property>
+                <property name="adjustment">
+                  <object class="GtkAdjustment">
+                    <property name="upper">43200</property>
+                    <property name="lower">60</property>
+                    <property name="step-increment">10</property>
+                    <property name="page-increment">100</property>
+                  </object>
+                </property>
+              </object>
             </child>
             <child>
               <object class="AdwComboRow" id="sidebar_meter_type_row">
