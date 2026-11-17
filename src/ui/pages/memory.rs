@@ -9,7 +9,7 @@ use crate::ui::widgets::graph_box::ResGraphBox;
 use crate::ui::widgets::stack_sidebar_item::UsageLabels;
 use crate::utils::i18n::{i18n, i18n_f};
 use crate::utils::settings::SETTINGS;
-use crate::utils::units::{convert_fraction, convert_storage};
+use crate::utils::units::{convert_fraction, convert_storage, convert_temperature};
 
 pub const TAB_ID: &str = "memory";
 const INACTIVE_SWAP_GRAPH_RETENTION_TICKS: u64 = 600;
@@ -77,6 +77,8 @@ mod imp {
         #[template_child]
         pub swap: TemplateChild<ResGraphBox>,
         #[template_child]
+        pub sensors: TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
         pub options: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
         pub separate_swap_graphs: TemplateChild<adw::SwitchRow>,
@@ -85,6 +87,7 @@ mod imp {
 
         pub swap_graphs: RefCell<Vec<SwapGraphEntry>>,
         pub swap_tick: Cell<u64>,
+        pub temperature_graphs: RefCell<Vec<ResGraphBox>>,
         #[template_child]
         pub authentication_banner: TemplateChild<adw::Banner>,
         #[template_child]
@@ -146,6 +149,8 @@ mod imp {
             Self {
                 memory: Default::default(),
                 swap: Default::default(),
+                sensors: Default::default(),
+                temperature_graphs: Default::default(),
                 options: Default::default(),
                 separate_swap_graphs: Default::default(),
                 swap_devices: Default::default(),
@@ -388,6 +393,7 @@ impl ResMemory {
             total_mem,
             available_mem,
             swap_devices,
+            ram_temperatures,
         } = memdata;
 
         let used_mem = total_mem.saturating_sub(available_mem);
@@ -418,6 +424,24 @@ impl ResMemory {
             i18n("Memory Usage"),
             convert_fraction(memory_fraction, true),
         );
+
+        imp.sensors.set_visible(!ram_temperatures.is_empty());
+        if !ram_temperatures.is_empty() {
+            self.update_temperature_graphs(&ram_temperatures);
+
+            if let Some(hottest) = ram_temperatures
+                .iter()
+                .flatten()
+                .copied()
+                .reduce(|a, b| if a > b { a } else { b })
+            {
+                usage_labels.add_with_icon(
+                    "thermometer-symbolic",
+                    i18n("Temperature"),
+                    convert_temperature(f64::from(hottest)),
+                );
+            }
+        }
 
         self.apply_swap_ui_state(&swap_state, Some(&mut usage_labels));
 
@@ -512,6 +536,50 @@ impl ResMemory {
         NonZeroU64::new(total)
             .map(|total| used as f64 / total.get() as f64)
             .unwrap_or(0.0)
+    }
+
+    /// Creates one graph per RAM module on first sight of the sensors and
+    /// keeps every graph fed with its module's temperature
+    fn update_temperature_graphs(&self, temperatures: &[Option<f32>]) {
+        let imp = self.imp();
+
+        {
+            let mut graphs = imp.temperature_graphs.borrow_mut();
+            if graphs.len() != temperatures.len() {
+                for graph_box in graphs.drain(..) {
+                    imp.sensors.remove(&graph_box);
+                }
+
+                for i in 0..temperatures.len() {
+                    let graph_box = ResGraphBox::new();
+                    if temperatures.len() > 1 {
+                        graph_box.set_title_label(&i18n_f(
+                            "Temperature Module {}",
+                            &[&(i + 1).to_string()],
+                        ));
+                    } else {
+                        graph_box.set_title_label(&i18n("Temperature"));
+                    }
+                    graph_box.graph().set_graph_color(0xe6, 0x61, 0x00);
+                    graph_box.graph().set_locked_max_y(None);
+                    imp.sensors.add(&graph_box);
+                    graphs.push(graph_box);
+                }
+            }
+        }
+
+        for (graph_box, temperature) in imp
+            .temperature_graphs
+            .borrow()
+            .iter()
+            .zip(temperatures.iter())
+        {
+            let Some(temperature) = temperature else {
+                continue;
+            };
+            graph_box.graph().push_data_point(f64::from(*temperature));
+            graph_box.set_subtitle(&convert_temperature(f64::from(*temperature)));
+        }
     }
 
     fn update_swap_device_graphs(&self, swap_devices: &[SwapDevice]) {

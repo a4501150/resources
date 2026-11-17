@@ -1,6 +1,13 @@
-use std::{fmt::Display, process::Command};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{LazyLock, Mutex},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
+use glob::glob;
 use lazy_regex::{Lazy, Regex, lazy_regex};
 use log::{debug, trace};
 
@@ -8,6 +15,9 @@ use crate::utils::i18n::i18n;
 use crate::utils::{FLATPAK_APP_PATH, FLATPAK_SPAWN, IS_FLATPAK, read_parsed};
 
 const PROC_MEMINFO: &str = "/proc/meminfo";
+
+/// hwmon drivers that expose on-DIMM thermal sensors (TSOD)
+const KNOWN_RAM_HWMON_DRIVERS: &[&str] = &["spd5118", "jc42", "ee1004"];
 
 const TEMPLATE_RE_PRESENT: &str = r"MEMORY_DEVICE_%_PRESENT=(\d)";
 
@@ -50,6 +60,84 @@ pub struct MemoryData {
     pub total_mem: usize,
     pub available_mem: usize,
     pub swap_devices: Vec<SwapDevice>,
+    /// Per-module RAM temperatures in °C (`None` if that sensor could not be
+    /// read this time), empty if no TSOD sensor is readable
+    pub ram_temperatures: Vec<Option<f32>>,
+}
+
+/// How often to look for RAM temperature sensors again while none is
+/// readable, e. g. because `spd5118` got loaded after the app started
+const RAM_SENSOR_RESCAN_INTERVAL: Duration = Duration::from_secs(60);
+
+/// hwmon `temp*_input` paths of every detected RAM module thermal sensor and
+/// the time they were searched for
+static RAM_TEMPERATURE_PATHS: LazyLock<Mutex<(Vec<PathBuf>, Option<Instant>)>> =
+    LazyLock::new(|| Mutex::new((Vec::new(), None)));
+
+fn temp_input_index(path: &Path) -> u32 {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("temp"))
+        .and_then(|name| name.strip_suffix("_input"))
+        .and_then(|index| index.parse().ok())
+        .unwrap_or(u32::MAX)
+}
+
+fn find_ram_temperature_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for hwmon in glob("/sys/class/hwmon/hwmon*")
+        .expect("Invalid glob pattern")
+        .flatten()
+    {
+        if let Ok(name) = read_parsed::<String>(hwmon.join("name"))
+            && KNOWN_RAM_HWMON_DRIVERS.contains(&name.trim())
+        {
+            let mut temps = glob(&format!("{}/temp*_input", hwmon.to_string_lossy()))
+                .expect("Invalid glob pattern")
+                .flatten()
+                .collect::<Vec<PathBuf>>();
+            temps.sort_by_key(|path| temp_input_index(path));
+            paths.extend(temps);
+        }
+    }
+    if paths.is_empty() {
+        debug!("No RAM module temperature sensors found!");
+    }
+    paths
+}
+
+fn read_ram_temperatures(paths: &[PathBuf]) -> Vec<Option<f32>> {
+    paths
+        .iter()
+        .map(|path| {
+            read_parsed::<u64>(path)
+                .ok()
+                .map(|millidegrees| millidegrees as f32 / 1000.0)
+        })
+        .collect()
+}
+
+/// Per-module RAM temperatures in °C, one entry per known sensor
+pub fn ram_temperatures() -> Vec<Option<f32>> {
+    let mut cache = RAM_TEMPERATURE_PATHS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let (paths, last_scan) = &mut *cache;
+
+    let mut temperatures = read_ram_temperatures(paths);
+    if temperatures.iter().all(Option::is_none)
+        && last_scan.is_none_or(|time| time.elapsed() >= RAM_SENSOR_RESCAN_INTERVAL)
+    {
+        *paths = find_ram_temperature_paths();
+        *last_scan = Some(Instant::now());
+        temperatures = read_ram_temperatures(paths);
+    }
+
+    if temperatures.iter().all(Option::is_none) {
+        Vec::new()
+    } else {
+        temperatures
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +224,7 @@ impl MemoryData {
             total_mem,
             available_mem,
             swap_devices: SwapDevice::get_all().unwrap_or_default(),
+            ram_temperatures: ram_temperatures(),
         };
 
         trace!("Gathered memory data: {memory_data:?}");

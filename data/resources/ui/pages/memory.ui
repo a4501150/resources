@@ -50,6 +50,12 @@
                       </object>
                     </child>
                     <child>
+                      <object class="AdwPreferencesGroup" id="sensors">
+                        <property name="title" translatable="yes">Sensors</property>
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwPreferencesGroup" id="swap_devices">
                         <property name="title" translatable="yes">Swap Devices</property>
                         <property name="visible">false</property>
