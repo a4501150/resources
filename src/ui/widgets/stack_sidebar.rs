@@ -218,6 +218,14 @@ impl ResStackSidebar {
                     }
                 ));
 
+                SETTINGS.connect_sidebar_usage_overlay(clone!(
+                    #[weak(rename_to = item)]
+                    sidebar_item,
+                    move |_| {
+                        item.refresh_visible_usage_box();
+                    }
+                ));
+
                 child
                     .bind_property("usage", &sidebar_item, "usage")
                     .sync_create()

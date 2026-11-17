@@ -110,6 +110,12 @@
               </object>
             </child>
             <child>
+              <object class="AdwSwitchRow" id="sidebar_usage_overlay_row">
+                <property name="title" translatable="yes">Overlay Usage on Meter</property>
+                <property name="subtitle" translatable="yes">If enabled, usage values are drawn on top of the sidebar meter; otherwise they get their own row below it</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwSwitchRow" id="normalize_cpu_usage_row">
                 <property name="title" translatable="yes">Normalize Processor Usage</property>
                 <property name="subtitle" translatable="yes">If enabled, the total usage of all cores will be divided by the amount of cores</property>

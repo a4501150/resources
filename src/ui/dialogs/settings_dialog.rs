@@ -34,6 +34,8 @@ mod imp {
         #[template_child]
         pub sidebar_meter_type_row: TemplateChild<adw::ComboRow>,
         #[template_child]
+        pub sidebar_usage_overlay_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
         pub normalize_cpu_usage_row: TemplateChild<adw::SwitchRow>,
 
         #[template_child]
@@ -193,6 +195,8 @@ impl ResSettingsDialog {
             .set_upper(f64::from(SETTINGS.max_graph_data_points().max(10)));
         imp.sidebar_meter_type_row
             .set_selected(SETTINGS.sidebar_meter_type() as u32);
+        imp.sidebar_usage_overlay_row
+            .set_active(SETTINGS.sidebar_usage_overlay());
         imp.normalize_cpu_usage_row
             .set_active(SETTINGS.normalize_cpu_usage());
 
@@ -328,6 +332,11 @@ impl ResSettingsDialog {
                 if let Some(t) = SidebarMeterType::from_repr(combo_row.selected() as u8) {
                     let _ = SETTINGS.set_sidebar_meter_type(t);
                 }
+            });
+
+        imp.sidebar_usage_overlay_row
+            .connect_active_notify(|switch_row| {
+                let _ = SETTINGS.set_sidebar_usage_overlay(switch_row.is_active());
             });
 
         imp.normalize_cpu_usage_row

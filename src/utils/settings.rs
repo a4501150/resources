@@ -337,6 +337,7 @@ impl Settings {
         show_virtual_drives,
         show_virtual_network_interfaces,
         network_bits,
+        sidebar_usage_overlay,
         apps_show_memory,
         apps_show_cpu,
         apps_show_drive_read_speed,

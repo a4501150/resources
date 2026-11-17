@@ -43,6 +43,10 @@
       <default>&quot;Graph&quot;</default>
       <summary>Sidebar Meter Type</summary>
     </key>
+    <key name="sidebar-usage-overlay" type="b">
+      <default>true</default>
+      <summary>Whether to render the sidebar usage labels as an overlay on the meter</summary>
+    </key>
     <key name="network-bits" type="b">
       <default>false</default>
       <summary>Display network speeds in bits per second</summary>

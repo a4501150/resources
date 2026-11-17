@@ -43,6 +43,7 @@ mod imp {
     use std::cell::{Cell, RefCell};
 
     use crate::ui::widgets::graph::ResGraph;
+    use crate::utils::settings::SETTINGS;
 
     use super::*;
 
@@ -77,6 +78,8 @@ mod imp {
         #[template_child]
         pub usage_label_no_meter: TemplateChild<gtk::FlowBox>,
         #[template_child]
+        pub usage_label_below: TemplateChild<gtk::FlowBox>,
+        #[template_child]
         pub usage_label_bar: TemplateChild<gtk::FlowBox>,
         #[template_child]
         pub progress_bar: TemplateChild<gtk::ProgressBar>,
@@ -101,16 +104,30 @@ mod imp {
     }
 
     impl ResStackSidebarItem {
-        fn visible_usage_box(&self) -> gtk::FlowBox {
+        /// The usage label boxes that should be filled for the currently visible meter page.
+        /// When the overlay setting is off, the graph page's labels get their own row below the
+        /// meter instead of being drawn on top of it.
+        fn visible_usage_boxes(&self) -> Vec<gtk::FlowBox> {
+            self.usage_label_below.set_visible(false);
+
             if let Some(visible) = self.meter_stack.visible_child() {
                 if visible == self.no_meter_page.get().upcast::<gtk::Widget>() {
-                    return self.usage_label_no_meter.get();
+                    return vec![self.usage_label_no_meter.get()];
                 } else if visible == self.progress_page.get().upcast::<gtk::Widget>() {
-                    return self.usage_label_bar.get();
+                    return vec![self.usage_label_bar.get()];
                 }
+
+                let overlay = SETTINGS.sidebar_usage_overlay();
+                self.usage_label_graph.set_visible(overlay);
+                self.usage_label_below.set_visible(!overlay);
+                return if overlay {
+                    vec![self.usage_label_graph.get()]
+                } else {
+                    vec![self.usage_label_below.get()]
+                };
             }
 
-            self.usage_label_graph.get()
+            vec![self.usage_label_graph.get()]
         }
 
         pub fn name(&self) -> glib::GString {
@@ -176,13 +193,15 @@ mod imp {
             }
 
             self.usage_labels.replace(contents);
-            let visible_box = self.visible_usage_box();
-            Self::fill_usage_box(&visible_box, &self.usage_labels.borrow());
+            for visible_box in self.visible_usage_boxes() {
+                Self::fill_usage_box(&visible_box, &self.usage_labels.borrow());
+            }
         }
 
         pub fn refresh_visible_usage_box(&self) {
-            let visible_box = self.visible_usage_box();
-            Self::fill_usage_box(&visible_box, &self.usage_labels.borrow());
+            for visible_box in self.visible_usage_boxes() {
+                Self::fill_usage_box(&visible_box, &self.usage_labels.borrow());
+            }
         }
 
         pub fn set_usage(&self, usage: f64) {
@@ -308,6 +327,7 @@ mod imp {
                 usage_label_graph: Default::default(),
                 progress_page: Default::default(),
                 usage_label_no_meter: Default::default(),
+                usage_label_below: Default::default(),
                 usage_label_bar: Default::default(),
                 progress_bar: Default::default(),
                 detail_label: Default::default(),
@@ -490,6 +510,10 @@ impl ResStackSidebarItem {
 
     pub fn set_detail_label_visible(&self, visible: bool) {
         self.imp().detail_label.set_visible(visible);
+    }
+
+    pub fn refresh_visible_usage_box(&self) {
+        self.imp().refresh_visible_usage_box();
     }
 
     pub fn primary_ord(&self) -> u32 {
